@@ -122,8 +122,8 @@ simulador = ctrl.ControlSystemSimulation(sistema_ctrl)
 
 
 # Parâmetros da simulação
-setpoint = 14  
-posicaoAtual = 8 
+setpoint = 20   
+posicaoAtual =  4
 posicoes = [posicaoAtual]
 tempos = [0.0]
 erro_anterior = setpoint - posicaoAtual
@@ -132,7 +132,7 @@ erro_anterior = setpoint - posicaoAtual
 
 
 for t in np.arange(0.1, 1.1, 0.1): 
-    potencia = t * 0.315 / 3  
+    potencia = t * 0.315   
     k1 = 1 if setpoint > posicaoAtual else -1
     posicaoAtual = abs(posicaoAtual * 0.999 + k1 * potencia * 0.251287)
     posicoes.append(posicaoAtual)
@@ -215,19 +215,28 @@ for nome, (altura, _) in mapeamento_andares.items():
         alturas_ativas.append(altura)
         labels_ativas.append(nome)
 
+import matplotlib.pyplot as plt
+
 # === GRÁFICO COM EIXO Y EM ANDARES E CORES ORIGINAIS ===
-plt.plot(tempos, posicoes, label='Posição do Elevador (m)', color='tab:blue')
-plt.axhline(y=setpoint, color='red', linestyle='--', label='Setpoint')
+fig, ax = plt.subplots()
 
-plt.yticks(alturas_ativas, labels_ativas)
-plt.xlabel('Tempo (segundos)')
-plt.ylabel('Andar')
-plt.title('Simulação do Controle Fuzzy - Elevador')
-plt.legend()
-plt.grid(True)
-plt.tight_layout()
+ax.plot(tempos, posicoes, label='Posição do Elevador (m)', color='tab:blue')
+ax.axhline(y=setpoint, color='red', linestyle='--', label='Setpoint')
+
+ax.set_yticks(alturas_ativas)
+ax.set_yticklabels(labels_ativas)
+
+ax.set_xlabel('Tempo (segundos)')
+ax.set_ylabel('Andar')
+ax.set_title('Simulação do Controle Fuzzy - Elevador')
+ax.legend()
+ax.grid(True)
+fig.tight_layout()
+
+
+ax.format_coord = lambda x, y: f"x={x:.4f} y={y:.4f}"
+
 plt.show()
-
 
 # === CÁLCULO DAS MÉTRICAS ===
 
