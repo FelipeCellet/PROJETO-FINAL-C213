@@ -2,13 +2,15 @@ import numpy as np
 import skfuzzy as fuzzy
 import skfuzzy.control as ctrl
 import matplotlib.pyplot as plt
+import pandas as pd
+from tabulate import tabulate
 
-# === VARIÁVEIS FUZZY (AJUSTADAS PARA O ELEVADOR) === #
+
+# === VARIÁVEIS FUZZY  === #
 
 erro = ctrl.Antecedent(np.arange(-25, 25.1, 0.1), 'erro')
 erro.membershipA = 'i'
 erro.unit = 'm'
-
 erro['MN'] = fuzzy.trapmf(erro.universe, [-25, -25, -15, -7.5])
 erro['PN'] = fuzzy.trimf(erro.universe, [-15, -7.5, 0])
 erro['ZE'] = fuzzy.trimf(erro.universe, [-1.0, 0, 1.0])
@@ -77,40 +79,36 @@ plt.show()
 
 
 
-# === BASE DE REGRAS CONFORME A TABELA DEFINIDA ===
+# === BASE DE REGRAS  ===
+R1  = ctrl.Rule(erro['MN'] & deltaErro['MN'], potenciaMotor['A'])   # descendo rápido
+R2  = ctrl.Rule(erro['MN'] & deltaErro['PN'], potenciaMotor['A'])   # descendo devagar
+R3  = ctrl.Rule(erro['MN'] & deltaErro['ZE'], potenciaMotor['A'])   # parado
+R4  = ctrl.Rule(erro['MN'] & deltaErro['PP'], potenciaMotor['M'])   # subindo devagar
+R5  = ctrl.Rule(erro['MN'] & deltaErro['MP'], potenciaMotor['B'])   # subindo rápido
 
+R6  = ctrl.Rule(erro['PN'] & deltaErro['MN'], potenciaMotor['A'])   # descendo rápido
+R7  = ctrl.Rule(erro['PN'] & deltaErro['PN'], potenciaMotor['A'])   # descendo devagar
+R8  = ctrl.Rule(erro['PN'] & deltaErro['ZE'], potenciaMotor['M'])   # parado
+R9  = ctrl.Rule(erro['PN'] & deltaErro['PP'], potenciaMotor['B'])   # subindo devagar
+R10 = ctrl.Rule(erro['PN'] & deltaErro['MP'], potenciaMotor['I'])   # subindo rápido
 
+R11 = ctrl.Rule(erro['ZE'] & deltaErro['MN'], potenciaMotor['M'])   # descendo
+R12 = ctrl.Rule(erro['ZE'] & deltaErro['PN'], potenciaMotor['B'])   # descendo devagar
+R13 = ctrl.Rule(erro['ZE'] & deltaErro['ZE'], potenciaMotor['I'])   # parado
+R14 = ctrl.Rule(erro['ZE'] & deltaErro['PP'], potenciaMotor['B'])   # subindo devagar
+R15 = ctrl.Rule(erro['ZE'] & deltaErro['MP'], potenciaMotor['M'])   # subindo rápido
 
+R16 = ctrl.Rule(erro['PP'] & deltaErro['MN'], potenciaMotor['B'])   # descendo rápido
+R17 = ctrl.Rule(erro['PP'] & deltaErro['PN'], potenciaMotor['M'])   # descendo devagar
+R18 = ctrl.Rule(erro['PP'] & deltaErro['ZE'], potenciaMotor['M'])   # parado
+R19 = ctrl.Rule(erro['PP'] & deltaErro['PP'], potenciaMotor['A'])   # subindo devagar
+R20 = ctrl.Rule(erro['PP'] & deltaErro['MP'], potenciaMotor['A'])   # subindo rápido
 
-R1  = ctrl.Rule(erro['MN'] & deltaErro['MN'], potenciaMotor['A'])  # descendo rápido
-R2  = ctrl.Rule(erro['MN'] & deltaErro['PN'], potenciaMotor['A'])  # descendo devagar
-R3  = ctrl.Rule(erro['MN'] & deltaErro['ZE'], potenciaMotor['A'])  # parado (continua descendo com força)
-R4  = ctrl.Rule(erro['MN'] & deltaErro['PP'], potenciaMotor['M'])  # já inverteu tendência
-R5  = ctrl.Rule(erro['MN'] & deltaErro['MP'], potenciaMotor['B'])  # subindo rápido
-
-R6  = ctrl.Rule(erro['PN'] & deltaErro['MN'], potenciaMotor['A'])
-R7  = ctrl.Rule(erro['PN'] & deltaErro['PN'], potenciaMotor['A'])
-R8  = ctrl.Rule(erro['PN'] & deltaErro['ZE'], potenciaMotor['M'])
-R9  = ctrl.Rule(erro['PN'] & deltaErro['PP'], potenciaMotor['B'])
-R10 = ctrl.Rule(erro['PN'] & deltaErro['MP'], potenciaMotor['I'])
-
-R11 = ctrl.Rule(erro['ZE'] & deltaErro['MN'], potenciaMotor['M'])  # começou a frear
-R12 = ctrl.Rule(erro['ZE'] & deltaErro['PN'], potenciaMotor['B'])  # desaceleração leve
-R13 = ctrl.Rule(erro['ZE'] & deltaErro['ZE'], potenciaMotor['I'])  # parado mesmo
-R14 = ctrl.Rule(erro['ZE'] & deltaErro['PP'], potenciaMotor['B'])  # tendência subindo
-R15 = ctrl.Rule(erro['ZE'] & deltaErro['MP'], potenciaMotor['M'])  # subindo mais forte
-
-R16 = ctrl.Rule(erro['PP'] & deltaErro['MN'], potenciaMotor['B'])
-R17 = ctrl.Rule(erro['PP'] & deltaErro['PN'], potenciaMotor['M'])
-R18 = ctrl.Rule(erro['PP'] & deltaErro['ZE'], potenciaMotor['M'])
-R19 = ctrl.Rule(erro['PP'] & deltaErro['PP'], potenciaMotor['A'])
-R20 = ctrl.Rule(erro['PP'] & deltaErro['MP'], potenciaMotor['A'])
-
-R21 = ctrl.Rule(erro['MP'] & deltaErro['MN'], potenciaMotor['M'])
-R22 = ctrl.Rule(erro['MP'] & deltaErro['PN'], potenciaMotor['M'])
-R23 = ctrl.Rule(erro['MP'] & deltaErro['ZE'], potenciaMotor['A'])  # mesmo parado, força
-R24 = ctrl.Rule(erro['MP'] & deltaErro['PP'], potenciaMotor['A'])
-R25 = ctrl.Rule(erro['MP'] & deltaErro['MP'], potenciaMotor['A'])
+R21 = ctrl.Rule(erro['MP'] & deltaErro['MN'], potenciaMotor['M'])   # descendo rápido
+R22 = ctrl.Rule(erro['MP'] & deltaErro['PN'], potenciaMotor['M'])   # descendo devagar
+R23 = ctrl.Rule(erro['MP'] & deltaErro['ZE'], potenciaMotor['A'])   # parado
+R24 = ctrl.Rule(erro['MP'] & deltaErro['PP'], potenciaMotor['A'])   # subindo devagar
+R25 = ctrl.Rule(erro['MP'] & deltaErro['MP'], potenciaMotor['A'])   # subindo rápido
 
 
 
@@ -252,8 +250,6 @@ print(f"Tempo de Movimento: {tempo_movimento:.1f} s")
 
 
 
-import pandas as pd
-from tabulate import tabulate
 
 # Termos possíveis
 termos = ['MN', 'PN', 'ZE', 'PP', 'MP']
