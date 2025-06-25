@@ -5,6 +5,7 @@ import paho.mqtt.client as mqtt
 import time
 
 emergencia_ativa = False
+setpoint_backup = None
 
 
 # === MAPEAMENTO ANDARES === #
@@ -40,14 +41,26 @@ def on_connect(client, userdata, flags, rc):
     client.subscribe("elevador/emergencia/reset")
 
 def on_message(client, userdata, msg):
-    global setpoint, estado, embalo_index, emergencia_ativa
-
+    global setpoint, estado, embalo_index, emergencia_ativa,setpoint_backup
     if msg.topic == "elevador/setpoint":
         try:
-            setpoint = float(msg.payload.decode())
+            novo_setpoint = float(msg.payload.decode())
+            andar_atual = altura_para_andar_nome(posicaoAtual)
+
+            # Verifica se o setpoint é o mesmo andar
+            for nome, (altura_ref, _) in mapeamento_andares.items():
+                if abs(novo_setpoint - altura_ref) < 1.0:  
+                    if nome == andar_atual:
+                        print(f"[MQTT] Setpoint recebido ({novo_setpoint}) é o mesmo andar atual ({nome}). Ignorando.")
+                        return  
+
+            
+            setpoint = novo_setpoint
+            setpoint_backup = setpoint 
             estado = "EMBALO"
             embalo_index = 0
             print(f"[MQTT] Novo setpoint: {setpoint}")
+
         except:
             print("[MQTT] Setpoint inválido recebido")
 
@@ -58,6 +71,10 @@ def on_message(client, userdata, msg):
     elif msg.topic == "elevador/emergencia/reset":
         print("[EMERGÊNCIA] Reset recebido. Voltando ao normal.")
         emergencia_ativa = False
+        if setpoint_backup is not None:
+            setpoint = setpoint_backup
+            estado = "EMBALO"
+            embalo_index = 0
 
 
 
@@ -83,10 +100,11 @@ deltaErro['PP'] = fuzzy.trimf(deltaErro.universe, [0, 0.5, 1.0])
 deltaErro['MP'] = fuzzy.trapmf(deltaErro.universe, [0.5, 1.0, 2, 2])
 
 potenciaMotor = ctrl.Consequent(np.arange(0, 91, 1), 'potenciaMotor')
-potenciaMotor['I'] = fuzzy.trimf(potenciaMotor.universe, [0, 15, 31.5])
-potenciaMotor['B'] = fuzzy.trimf(potenciaMotor.universe, [10, 25, 40])     
-potenciaMotor['M'] = fuzzy.trimf(potenciaMotor.universe, [30, 55, 80])     
-potenciaMotor['A'] = fuzzy.trimf(potenciaMotor.universe, [65, 82, 90])  
+potenciaMotor['I'] = fuzzy.trimf(potenciaMotor.universe, [0, 15, 30])
+potenciaMotor['B'] = fuzzy.trimf(potenciaMotor.universe, [15, 30, 55])
+potenciaMotor['M'] = fuzzy.trimf(potenciaMotor.universe, [30, 55, 80])
+potenciaMotor['A'] = fuzzy.trimf(potenciaMotor.universe, [55, 80, 90])
+
 
 # === BASE DE REGRAS === #
 rules = [
@@ -94,23 +112,23 @@ rules = [
     ctrl.Rule(erro['MN'] & deltaErro['PN'], potenciaMotor['A']),
     ctrl.Rule(erro['MN'] & deltaErro['ZE'], potenciaMotor['A']),
     ctrl.Rule(erro['MN'] & deltaErro['PP'], potenciaMotor['M']),
-    ctrl.Rule(erro['MN'] & deltaErro['MP'], potenciaMotor['M']),
+    ctrl.Rule(erro['MN'] & deltaErro['MP'], potenciaMotor['B']),
     ctrl.Rule(erro['PN'] & deltaErro['MN'], potenciaMotor['A']),
     ctrl.Rule(erro['PN'] & deltaErro['PN'], potenciaMotor['A']),
-    ctrl.Rule(erro['PN'] & deltaErro['ZE'], potenciaMotor['A']),
-    ctrl.Rule(erro['PN'] & deltaErro['PP'], potenciaMotor['M']),
-    ctrl.Rule(erro['PN'] & deltaErro['MP'], potenciaMotor['M']),
+    ctrl.Rule(erro['PN'] & deltaErro['ZE'], potenciaMotor['M']),
+    ctrl.Rule(erro['PN'] & deltaErro['PP'], potenciaMotor['B']),
+    ctrl.Rule(erro['PN'] & deltaErro['MP'], potenciaMotor['I']),
     ctrl.Rule(erro['ZE'] & deltaErro['MN'], potenciaMotor['M']),
-    ctrl.Rule(erro['ZE'] & deltaErro['PN'], potenciaMotor['M']),
+    ctrl.Rule(erro['ZE'] & deltaErro['PN'], potenciaMotor['B']),
     ctrl.Rule(erro['ZE'] & deltaErro['ZE'], potenciaMotor['I']),
-    ctrl.Rule(erro['ZE'] & deltaErro['PP'], potenciaMotor['M']),
+    ctrl.Rule(erro['ZE'] & deltaErro['PP'], potenciaMotor['B']),
     ctrl.Rule(erro['ZE'] & deltaErro['MP'], potenciaMotor['M']),
-    ctrl.Rule(erro['PP'] & deltaErro['MN'], potenciaMotor['M']),
+    ctrl.Rule(erro['PP'] & deltaErro['MN'], potenciaMotor['B']),
     ctrl.Rule(erro['PP'] & deltaErro['PN'], potenciaMotor['M']),
-    ctrl.Rule(erro['PP'] & deltaErro['ZE'], potenciaMotor['A']),
+    ctrl.Rule(erro['PP'] & deltaErro['ZE'], potenciaMotor['M']),
     ctrl.Rule(erro['PP'] & deltaErro['PP'], potenciaMotor['A']),
     ctrl.Rule(erro['PP'] & deltaErro['MP'], potenciaMotor['A']),
-    ctrl.Rule(erro['MP'] & deltaErro['MN'], potenciaMotor['B']),
+    ctrl.Rule(erro['MP'] & deltaErro['MN'], potenciaMotor['M']),
     ctrl.Rule(erro['MP'] & deltaErro['PN'], potenciaMotor['M']),
     ctrl.Rule(erro['MP'] & deltaErro['ZE'], potenciaMotor['A']),
     ctrl.Rule(erro['MP'] & deltaErro['PP'], potenciaMotor['A']),
@@ -132,11 +150,18 @@ try:
             setpoint = None
             client.publish("elevador/altura", f"{posicaoAtual:.2f}".encode())
             time.sleep(0.2)
-            continue 
-         
+            continue
+
+        #  Nada acontece até que setpoint seja recebido
+        if setpoint is None or estado == "PARADO":
+            client.publish("elevador/altura", f"{posicaoAtual:.2f}".encode())
+            time.sleep(0.2)
+            continue
+
+        #  EMBALO 2 segundos iniciais
         if estado == "EMBALO" and embalo_index < 10:
             tempo_s = (embalo_index + 1) * 0.2
-            potencia = (31.5 * (tempo_s / 2)) / 100
+            potencia = 0.315 * (tempo_s / 2)
             k1 = 1 if setpoint > posicaoAtual else -1
             posicaoAtual = abs(posicaoAtual * 0.999 + k1 * potencia * 0.251287)
             client.publish("elevador/altura", f"{posicaoAtual:.2f}".encode())
@@ -144,15 +169,21 @@ try:
             time.sleep(0.2)
             if embalo_index == 10:
                 estado = "MOVIMENTO"
+                erro_anterior = setpoint - posicaoAtual
             continue
 
-        if estado == "MOVIMENTO" and setpoint is not None:
+        #  FUZZY
+        elif estado == "MOVIMENTO":
             erro_atual = setpoint - posicaoAtual
             deltaErro_atual = erro_atual - erro_anterior
             k1 = 1 if erro_atual > 0 else -1
+            print(f"[DEBUG] erro={erro_atual:.2f} deltaErro={deltaErro_atual:.2f}")
 
-            erro_atual = max(-25, min(25, erro_atual))
-            deltaErro_atual = max(-2, min(2, deltaErro_atual))
+            #  Validação
+            if not (-25 <= erro_atual <= 25 and -2 <= deltaErro_atual <= 2):
+                print("[FUZZY BLOQUEADO] Entradas fora do universo. Ignorando ciclo.")
+                time.sleep(0.2)
+                continue
 
             try:
                 simulador.input['erro'] = erro_atual
@@ -161,31 +192,31 @@ try:
                 potencia = simulador.output['potenciaMotor'] / 100
             except Exception as e:
                 print(f"[ERRO FUZZY] Falha ao computar: {e}")
+                time.sleep(0.2)
                 continue
 
             posicaoAtual = abs(posicaoAtual * 0.9995 + k1 * potencia * 0.212312)
             erro_anterior = erro_atual
 
+            #  Inicia frenagem
             if abs(erro_atual) < 0.02:
                 print("[ELEVADOR] Iniciando frenagem...")
-                erro_freio_anterior = erro_atual
-
-                for t in np.arange(0.1, 0.6, 0.1):  # 1 segundo = 5 ciclos × 200ms
+                for i in range(5):
+                    t = (i + 1) * 0.2
                     erro_freio = setpoint - posicaoAtual
                     k1 = 1 if erro_freio > 0 else -1
                     potencia = (1 - t) * 0.315
                     nova_pos = posicaoAtual * 0.999 + k1 * potencia * 0.251287
-
                     posicaoAtual = abs(nova_pos)
-                    erro_freio_anterior = erro_freio
                     client.publish("elevador/altura", f"{posicaoAtual:.2f}".encode())
                     time.sleep(0.2)
 
                 estado = "PARADO"
                 setpoint = None
                 print("[ELEVADOR] Chegou ao destino e está parado.")
+                continue
 
-        # Publicação contínua a cada 200ms
+        #  posição atual
         client.publish("elevador/altura", f"{posicaoAtual:.2f}".encode())
         time.sleep(0.2)
 

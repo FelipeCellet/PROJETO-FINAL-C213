@@ -21,23 +21,47 @@ mapeamento_andares = {
 ultima_altura = None
 setpoint_atual = None
 botoes = {}
+fila_andares = []
+emergencia_ativa = False
+piscar_estado = [False]
 
-# === Cronômetro ===
 cronometro_ativo = False
 segundos_passados = 0
 
 def atualizar_cronometro():
     global segundos_passados
     if cronometro_ativo:
+        segundos_passados += 1
         minutos = segundos_passados // 60
         segundos = segundos_passados % 60
         tempo_var.set(f"{minutos:02}:{segundos:02}")
-        segundos_passados += 1
         app.after(1000, atualizar_cronometro)
-    else:
-        tempo_var.set("00:00")
 
-# === Funções MQTT ===
+def piscar_botoes_emergencia():
+    if not emergencia_ativa:
+        for nome in botoes:
+            if nome in fila_andares:
+                botoes[nome].configure(border_color="red", fg_color="#ffe6e6")
+            else:
+                botoes[nome].configure(border_color="#888", fg_color="#dddddd")
+        return
+    cor = "red" if piscar_estado[0] else "#888"
+    for botao in botoes.values():
+        botao.configure(border_color=cor)
+    piscar_estado[0] = not piscar_estado[0]
+    app.after(500, piscar_botoes_emergencia)
+
+def processar_proximo_da_fila():
+    global setpoint_atual, cronometro_ativo, segundos_passados
+    if fila_andares:
+        nome = fila_andares[0]
+        altura = mapeamento_andares[nome]
+        setpoint_atual = altura
+        client.publish(TOPICO_ENVIAR, str(altura), retain=True)
+        cronometro_ativo = True
+        segundos_passados = 0
+        atualizar_cronometro()
+
 def on_connect(client, userdata, flags, rc):
     client.subscribe(TOPICO_RECEBER)
 
@@ -71,56 +95,59 @@ def on_message(client, userdata, msg):
 
         if setpoint_atual is not None and abs(altura_atual - setpoint_atual) < 0.5:
             cronometro_ativo = False
+
+            # Reset visual do botão do andar atendido
             for nome, altura in mapeamento_andares.items():
                 if altura == setpoint_atual:
                     botoes[nome].configure(border_color="#888", fg_color="#dddddd")
-                    setpoint_atual = None
                     break
+
+            if fila_andares:
+                fila_andares.pop(0)
+                processar_proximo_da_fila()
+            else:
+                setpoint_atual = None
 
     except Exception as e:
         print("Erro:", e)
 
 def enviar_setpoint(nome_andar):
-    global setpoint_atual, cronometro_ativo, segundos_passados
-    if nome_andar in mapeamento_andares:
-        altura = mapeamento_andares[nome_andar]
-        setpoint_atual = altura
-        client.publish(TOPICO_ENVIAR, str(altura), retain=True)
-        print(f"[ENVIADO] {nome_andar} → {altura}m")
-
-        for nome in botoes:
-            botoes[nome].configure(border_color="#888", fg_color="#dddddd")
-
+    global fila_andares
+    if nome_andar in mapeamento_andares and nome_andar not in fila_andares:
+        fila_andares.append(nome_andar)
         botoes[nome_andar].configure(border_color="red", fg_color="#ffe6e6")
-
-        # Inicia cronômetro
-        segundos_passados = 0
-        cronometro_ativo = True
-        atualizar_cronometro()
+        if setpoint_atual is None:
+            processar_proximo_da_fila()
 
 def acionar_emergencia():
-    global setpoint_atual, cronometro_ativo
+    global setpoint_atual, cronometro_ativo, emergencia_ativa
     setpoint_atual = None
     cronometro_ativo = False
+    emergencia_ativa = True
     print("[INTERFACE] EMERGÊNCIA ACIONADA!")
-    andar_var.set("—")
+    andar_var.set("-")
     movimento_var.set("🚨 EMERGÊNCIA")
     movimento_label.configure(text_color="red")
-    direcao_label.configure(text="🚫")
+    direcao_label.configure(text="⛔")
     client.publish(TOPICO_EMERGENCIA, "true")
+    piscar_botoes_emergencia()
 
 def resetar_emergencia():
+    global emergencia_ativa
+    emergencia_ativa = False
     print("[INTERFACE] RESET enviado.")
     client.publish(TOPICO_RESET, "true")
+    if fila_andares and setpoint_atual is None:
+        processar_proximo_da_fila()
 
-# === MQTT ===
+# MQTT setup
 client = Client()
 client.on_connect = on_connect
 client.on_message = on_message
 client.connect(BROKER, 1883)
 client.loop_start()
 
-# === INTERFACE ===
+# INTERFACE
 app = ctk.CTk()
 app.title("Painel Villarta Estilizado")
 app.geometry("320x700")
@@ -137,15 +164,13 @@ ctk.CTkLabel(app, text="CAPACIDADE 975kg\n13 PASSAGEIROS", font=("Times New Roma
 ctk.CTkLabel(app, text="Andar atual", font=("Segoe UI", 14), text_color="#444").pack(pady=(10, 2))
 ctk.CTkLabel(app, textvariable=andar_var, font=("Segoe UI Black", 48), text_color="#003366").pack()
 
-# Relógio digital
 ctk.CTkLabel(app, text="Tempo da viagem", font=("Segoe UI", 14), text_color="#444").pack(pady=(10, 0))
 ctk.CTkLabel(app, textvariable=tempo_var, font=("Segoe UI Black", 24), text_color="#555").pack(pady=(0, 10))
 
-# Ícones e botões
 icones_frame = ctk.CTkFrame(app, fg_color="#f5f5f5")
 icones_frame.pack(pady=10)
 
-ctk.CTkLabel(icones_frame, text="⏪⏩", font=("Segoe UI", 20)).grid(row=0, column=0)
+
 
 botao_alarme = ctk.CTkButton(icones_frame, text="🔔", font=("Segoe UI", 20),
                              width=40, height=40, corner_radius=20,
@@ -165,7 +190,6 @@ direcao_label.grid(row=0, column=3)
 movimento_label = ctk.CTkLabel(app, textvariable=movimento_var, font=("Segoe UI", 18), text_color="gray")
 movimento_label.pack(pady=5)
 
-# Botões de andar
 frame_botoes = ctk.CTkFrame(app, fg_color="#f5f5f5")
 frame_botoes.pack(pady=10)
 
@@ -174,10 +198,9 @@ andares_layout = [
     ["3", "4", "5"],
     ["T", "1", "2"]
 ]
-
 braille_simples = {
-    "T": "●", "1": "●", "2": "●●", "3": "●●",
-    "4": "●●", "5": "●●", "6": "●●", "7": "●●", "8": "●●"
+    "T": "⠚", "1": "⠁", "2": "⠃", "3": "⠉",
+    "4": "⠙", "5": "⠑", "6": "⠋", "7": "⠛", "8": "⠓"
 }
 
 def criar_botao_redondo(parent, andar):
@@ -188,21 +211,17 @@ def criar_botao_redondo(parent, andar):
     label_numero = ctk.CTkLabel(frame, text=andar, font=("Consolas", 18, "bold"), text_color="#222")
     label_numero.place(relx=0.5, rely=0.25, anchor="center")
 
-    canvas = tk.Canvas(frame, width=30, height=20, bg="#dddddd", highlightthickness=0)
-    canvas.place(relx=0.5, rely=0.7, anchor="center")
-
-    bolinhas = braille_simples.get(andar, "")
-    if len(bolinhas) >= 1:
-        canvas.create_oval(5, 5, 9, 9, fill="black", outline="")
-    if len(bolinhas) >= 2:
-        canvas.create_oval(15, 5, 19, 9, fill="black", outline="")
+    braille_label = ctk.CTkLabel(frame, text=braille_simples.get(andar, ""),
+                                 font=("Segoe UI Symbol", 18), text_color="#111")
+    braille_label.place(relx=0.5, rely=0.7, anchor="center")
 
     def clique(e): enviar_setpoint(andar)
     frame.bind("<Button-1>", clique)
     label_numero.bind("<Button-1>", clique)
-    canvas.bind("<Button-1>", clique)
+    braille_label.bind("<Button-1>", clique)
 
     return frame
+
 
 for r, linha in enumerate(andares_layout):
     for c, label in enumerate(linha):
