@@ -130,7 +130,7 @@ erro_anterior = setpoint - posicaoAtual
 
 
 
-
+#EMBALO INICIAL POR 2 SEGUNDOS
 for t in np.arange(0.1, 1.1, 0.1): 
     potencia = t * 0.315   
     k1 = 1 if setpoint > posicaoAtual else -1
